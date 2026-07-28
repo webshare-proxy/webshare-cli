@@ -1,0 +1,16 @@
+# Binaries and build artifacts
+/bin/
+*.test
+*.out
+
+# Coverage
+cover.out
+coverage.txt
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Local binary
+/webshare
