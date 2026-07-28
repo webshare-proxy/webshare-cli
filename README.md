@@ -6,11 +6,22 @@
 
 ## Install
 
+Download a prebuilt binary for your platform from the
+[releases page](https://github.com/webshare-proxy/webshare-cli/releases) —
+no Go required. Binaries are published for Linux, macOS and Windows on
+amd64 and arm64; each release includes a `checksums.txt`.
+
+```sh
+# example: macOS on Apple Silicon
+tar -xzf webshare_*_darwin_arm64.tar.gz
+sudo mv webshare /usr/local/bin/
+```
+
+With Go 1.23+ installed you can build from source instead:
+
 ```sh
 go install github.com/webshare-proxy/webshare-cli@latest
 ```
-
-Requires Go 1.23 or newer. Prebuilt binaries will accompany tagged releases.
 
 ## Authentication
 
