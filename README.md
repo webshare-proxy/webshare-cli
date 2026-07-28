@@ -6,14 +6,20 @@
 
 ## Install
 
-Download a prebuilt binary for your platform from the
+On macOS, use Homebrew:
+
+```sh
+brew install webshare-proxy/tap/webshare
+```
+
+Or download a prebuilt binary for your platform from the
 [releases page](https://github.com/webshare-proxy/webshare-cli/releases) —
 no Go required. Binaries are published for Linux, macOS and Windows on
 amd64 and arm64; each release includes a `checksums.txt`.
 
 ```sh
-# example: macOS on Apple Silicon
-tar -xzf webshare_*_darwin_arm64.tar.gz
+# example: Linux on amd64
+tar -xzf webshare_*_linux_amd64.tar.gz
 sudo mv webshare /usr/local/bin/
 ```
 

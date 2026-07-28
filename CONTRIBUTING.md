@@ -77,6 +77,13 @@ git push origin v0.2.0
 
 GoReleaser (`.goreleaser.yaml`) builds static binaries for
 linux/darwin/windows on amd64/arm64, packages them with `checksums.txt`,
-stamps the tag into `webshare --version`, and publishes a GitHub release
-with a changelog from the commit log. Versions follow semver; the config
-can be checked locally with `goreleaser check`.
+stamps the tag into `webshare --version`, publishes a GitHub release with
+a changelog from the commit log, and pushes an updated Homebrew cask to
+[webshare-proxy/homebrew-tap](https://github.com/webshare-proxy/homebrew-tap)
+(`brew install webshare-proxy/tap/webshare`). Versions follow semver; the
+config can be checked locally with `goreleaser check`.
+
+The tap push authenticates with the `HOMEBREW_TAP_GITHUB_TOKEN` repo
+secret — a fine-grained PAT with contents read/write on the tap repo only.
+If a release fails at the Homebrew step, check that this secret exists and
+has not expired; re-run the workflow after fixing it.

@@ -23,6 +23,24 @@ archives:
 checksum:
   name_template: checksums.txt
 
+homebrew_casks:
+  - name: webshare
+    repository:
+      owner: webshare-proxy
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/webshare-proxy/webshare-cli
+    description: Official command-line interface for the Webshare proxy API
+    # The binaries are not notarized; clear the quarantine attribute so
+    # Gatekeeper does not block them (standard cask hook for unsigned Go
+    # binaries).
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/webshare"]
+          end
+
 changelog:
   sort: asc
   filters:
