@@ -25,6 +25,13 @@ func newProxiesCmd(flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
+// defaultProxyListLimit caps `proxies list` by default. Without a cap the
+// command walks every page of the proxy list before printing anything, which
+// on a residential backbone plan — where the list runs to millions of entries
+// — looks like a hang. --limit 0 still fetches everything, and
+// `proxies download` returns a full list in a single request.
+const defaultProxyListLimit = 100
+
 // proxyHost returns the address to connect to: the proxy's own address in
 // direct mode, or the backbone host when the API returns none (residential
 // plans).
@@ -50,9 +57,15 @@ func newProxiesListCmd(flags *rootFlags) *cobra.Command {
 
 On a terminal the result is a table. In a pipe it is plain
 address:port:username:password lines — the format most proxy-consuming tools
-accept directly. Use --format to force txt, csv, json or table.`,
+accept directly. Use --format to force txt, csv, json or table.
+
+Only the first 100 proxies are listed unless you raise --limit; the command
+pages through the API one request at a time, and a residential backbone plan
+holds far more entries than is useful to page through. --limit 0 fetches every
+one of them. To export a full list, prefer "webshare proxies download", which
+the server renders in a single request.`,
 		Example: `  webshare proxies list
-  webshare proxies list --country us,fr > proxies.txt
+  webshare proxies list --country us,fr --limit 0 > proxies.txt
   webshare proxies list --format csv > proxies.csv
   curl --proxy "$(webshare proxies list --limit 1 | awk -F: '{print "http://"$3":"$4"@"$1":"$2}')" https://ipv4.webshare.io/`,
 		Args: cobra.NoArgs,
@@ -68,23 +81,34 @@ accept directly. Use --format to force txt, csv, json or table.`,
 			for _, c := range countries {
 				params.CountryCodeIn = append(params.CountryCodeIn, strings.ToUpper(c))
 			}
+			// Read one past the limit so we can tell a list that happens to
+			// end exactly at the limit from one that was cut short.
 			var proxies []webshare.Proxy
+			truncated := false
 			for proxy, err := range client.Proxies.ListAll(cmd.Context(), params) {
 				if err != nil {
 					return err
 				}
-				proxies = append(proxies, proxy)
-				if limit > 0 && len(proxies) >= limit {
+				if limit > 0 && len(proxies) == limit {
+					truncated = true
 					break
 				}
+				proxies = append(proxies, proxy)
 			}
-			return writeProxies(cmd, flags, proxies, format)
+			if err := writeProxies(cmd, flags, proxies, format); err != nil {
+				return err
+			}
+			if truncated {
+				fmt.Fprintf(os.Stderr, "stopped at --limit %d; pass --limit 0 for every proxy, "+
+					"or use `webshare proxies download` to fetch the whole list in one request\n", limit)
+			}
+			return nil
 		},
 	}
 	addPlanFlag(cmd, &planID)
 	cmd.Flags().StringVar(&mode, "mode", "direct", "connection mode: direct or backbone (residential plans need backbone)")
 	cmd.Flags().StringSliceVar(&countries, "country", nil, "filter by country codes (e.g. us,fr)")
-	cmd.Flags().IntVar(&limit, "limit", 0, "maximum number of proxies (default: all)")
+	cmd.Flags().IntVar(&limit, "limit", defaultProxyListLimit, "maximum number of proxies (0 for all)")
 	cmd.Flags().StringVar(&format, "format", "auto", "output format: auto, table, txt, csv or json")
 	return cmd
 }
