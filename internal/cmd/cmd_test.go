@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -215,5 +217,91 @@ func TestParseSince(t *testing.T) {
 	}
 	if _, err := parseSince("soon"); err == nil {
 		t.Error("parseSince(soon) succeeded, want an error")
+	}
+}
+
+// newPagedProxyServer serves totalPages pages of perPage proxies, linked by
+// the envelope's next URL, and records how many pages were actually fetched.
+func newPagedProxyServer(t *testing.T, totalPages, perPage int, fetched *int) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/proxy/list/" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		*fetched++
+		page := 1
+		if p := r.URL.Query().Get("page"); p != "" {
+			if n, err := strconv.Atoi(p); err == nil {
+				page = n
+			}
+		}
+		results := make([]any, 0, perPage)
+		for i := range perPage {
+			id := (page-1)*perPage + i
+			results = append(results, proxyFixture(fmt.Sprintf("d-%d", id), "10.0.0.1", 8000+id))
+		}
+		body := map[string]any{
+			"count": totalPages * perPage, "previous": nil, "results": results,
+		}
+		if page < totalPages {
+			body["next"] = fmt.Sprintf("http://%s/api/v2/proxy/list/?page=%d", r.Host, page+1)
+		} else {
+			body["next"] = nil
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(body); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestProxiesListStopsAtDefaultLimit(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	fetched := 0
+	// 100 pages of 60 is 6000 proxies; the default limit of 100 should need
+	// only the first two pages.
+	server := newPagedProxyServer(t, 100, 60, &fetched)
+	out, code := runCLI(t, "proxies", "list", "--base-url", server.URL, "--format", "txt")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if got := len(strings.Split(strings.TrimSpace(out), "\n")); got != defaultProxyListLimit {
+		t.Errorf("printed %d proxies, want the default limit of %d", got, defaultProxyListLimit)
+	}
+	if fetched != 2 {
+		t.Errorf("fetched %d pages, want 2 — the default limit must stop pagination early", fetched)
+	}
+}
+
+func TestProxiesListLimitZeroFetchesEveryPage(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	fetched := 0
+	server := newPagedProxyServer(t, 3, 60, &fetched)
+	out, code := runCLI(t, "proxies", "list", "--base-url", server.URL, "--format", "txt", "--limit", "0")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if got := len(strings.Split(strings.TrimSpace(out), "\n")); got != 180 {
+		t.Errorf("printed %d proxies, want all 180", got)
+	}
+	if fetched != 3 {
+		t.Errorf("fetched %d pages, want all 3", fetched)
+	}
+}
+
+func TestProxiesListShorterThanLimitIsWhole(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	fetched := 0
+	server := newPagedProxyServer(t, 1, 2, &fetched)
+	out, code := runCLI(t, "proxies", "list", "--base-url", server.URL, "--format", "txt")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if got := len(strings.Split(strings.TrimSpace(out), "\n")); got != 2 {
+		t.Errorf("printed %d proxies, want both", got)
 	}
 }

@@ -47,10 +47,10 @@ pipe you get machine-readable output with no headers or colors:
 ```sh
 # Plain address:port:username:password lines — the format most
 # proxy-consuming tools accept directly
-webshare proxies list > proxies.txt
+webshare proxies list --limit 0 > proxies.txt
 
 # CSV for tools that want structured proxy lists
-webshare proxies list --format csv > proxies.csv
+webshare proxies list --format csv --limit 0 > proxies.csv
 
 # JSON everywhere, for jq and friends
 webshare proxies list --json | jq '.[].country_code'
@@ -68,7 +68,7 @@ to stderr; exit codes are `0` (success), `1` (API/network error), `2`
 
 | Command | Purpose |
 |---|---|
-| `webshare proxies list` | List proxies as a table, txt, csv or json (`--country`, `--limit`) |
+| `webshare proxies list` | List proxies as a table, txt, csv or json (`--country`, `--limit`; first 100 by default) |
 | `webshare proxies download` | Server-rendered proxy list; download token fetched automatically |
 | `webshare proxies refresh` | Replace the whole proxy list (asks for confirmation) |
 | `webshare proxies replaced` | Show replaced proxies and their successors |
@@ -103,7 +103,7 @@ webshare proxy-url --country us --sessions 5
 webshare activity list --since 15m --error '*'
 
 # Feed only French proxies to a scraper
-webshare proxies list --country fr --format csv > fr.csv
+webshare proxies list --country fr --format csv --limit 0 > fr.csv
 
 # Download last month's invoice
 webshare transactions list
