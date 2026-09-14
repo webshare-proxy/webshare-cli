@@ -41,8 +41,8 @@ on the API Keys page of the Webshare dashboard.
 Output adapts to where it goes: tables on a terminal, tab-separated values in
 a pipe, and --format csv/json/txt where structured output is useful.`,
 		Example: `  # Feed your proxy list to another tool
-  webshare proxies list > proxies.txt
-  webshare proxies list --format csv > proxies.csv
+  webshare proxies list --limit 0 > proxies.txt
+  webshare proxies list --format csv --limit 0 > proxies.csv
 
   # Authorize this machine's IP for credential-less proxy use
   webshare ipauth add --current
