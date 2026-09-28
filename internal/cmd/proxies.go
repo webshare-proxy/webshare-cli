@@ -70,7 +70,7 @@ the server renders in a single request.`,
   curl --proxy "$(webshare proxies list --limit 1 | awk -F: '{print "http://"$3":"$4"@"$1":"$2}')" https://ipv4.webshare.io/`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -180,7 +180,7 @@ address:port:username:password line per proxy). The download token is fetched
 from your proxy configuration automatically.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -238,7 +238,7 @@ on-demand refreshes and changes every proxy in the list.`,
 			if err := confirm(cmd, yes, "replace the entire proxy list"); err != nil {
 				return err
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -268,7 +268,7 @@ func newProxiesReplacedCmd(flags *rootFlags) *cobra.Command {
 		Short: "List proxies that were replaced and their successors",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}

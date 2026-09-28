@@ -52,7 +52,7 @@ defaults to direct; otherwise it defaults to backbone (p.webshare.io).`,
 				return usagef("--rotate and --sessions are mutually exclusive")
 			}
 			if username == "" && password == "" {
-				client, err := newClient(flags)
+				client, err := newClient(cmd.Context(), flags)
 				if err != nil {
 					return err
 				}

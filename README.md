@@ -31,13 +31,29 @@ go install github.com/webshare-proxy/webshare-cli@latest
 
 ## Authentication
 
-The CLI reads the `WEBSHARE_API_KEY` environment variable. Create a key on
-the API Keys page of the Webshare dashboard and export it:
+Sign in through your browser:
+
+```sh
+webshare login
+webshare whoami
+```
+
+`login` opens the Webshare consent screen, asks for the access its commands
+need, and stores the token in your operating system's keychain. Where there
+is no keychain it falls back to a file only you can read. The token refreshes
+by itself; `webshare logout` revokes it.
+
+An API key still works, and takes precedence over a stored login, which is
+what you want on a server or in CI:
 
 ```sh
 export WEBSHARE_API_KEY=your-key
 webshare whoami
 ```
+
+Create a key on the API Keys page of the Webshare dashboard. `login` needs a
+browser on the same machine, so an API key is the way in over SSH or from a
+container.
 
 ## It just works with other tools
 

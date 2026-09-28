@@ -27,7 +27,7 @@ func newIPAuthListCmd(flags *rootFlags) *cobra.Command {
 		Short: "List authorized IP addresses",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -78,7 +78,7 @@ func newIPAuthAddCmd(flags *rootFlags) *cobra.Command {
 			if current == (len(args) == 1) {
 				return usagef("pass exactly one of an IP address or --current")
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func newIPAuthRemoveCmd(flags *rootFlags) *cobra.Command {
 		Short: "Remove an IP authorization by ID or by IP address",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}

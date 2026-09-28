@@ -34,7 +34,7 @@ func newActivityListCmd(flags *rootFlags) *cobra.Command {
   webshare activity list --since 15m --search example.com`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -114,7 +114,7 @@ func newActivityExportCmd(flags *rootFlags) *cobra.Command {
 token is fetched automatically.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}

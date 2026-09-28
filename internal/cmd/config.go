@@ -27,7 +27,7 @@ func newConfigShowCmd(flags *rootFlags) *cobra.Command {
 		Short: "Show the proxy configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -111,7 +111,7 @@ func newConfigSetCmd(flags *rootFlags) *cobra.Command {
 			if planID > 0 {
 				params.PlanID = webshare.Int(planID)
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
