@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/zalando/go-keyring"
 )
 
@@ -41,15 +43,44 @@ func accountFor(baseURL string) string {
 	return parsed.Host
 }
 
-// fallbackPath is where the tokens go when the operating system has no
-// keyring to put them in. It never guesses: a relative path would drop a live
-// token into whatever directory the command was run from.
-func fallbackPath() (string, error) {
+// configDir is where the CLI keeps what it has to keep on disk. It never
+// guesses: a relative path would drop a live token into whatever directory the
+// command was run from.
+func configDir() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("finding somewhere to keep the login: %w", err)
 	}
-	return filepath.Join(dir, "webshare", "credentials.json"), nil
+	return filepath.Join(dir, "webshare"), nil
+}
+
+// fallbackPath is where the tokens go when the operating system has no
+// keyring to put them in.
+func fallbackPath() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "credentials.json"), nil
+}
+
+// lockRefresh waits until no other webshare command is refreshing the login
+// and returns the function that lets the next one in. The operating system
+// releases the lock when its holder exits, so a command that crashes midway
+// leaves nobody waiting on it.
+func lockRefresh(ctx context.Context) (unlock func(), err error) {
+	dir, err := configDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", dir, err)
+	}
+	lock := flock.New(filepath.Join(dir, "refresh.lock"))
+	if _, err := lock.TryLockContext(ctx, 50*time.Millisecond); err != nil {
+		return nil, fmt.Errorf("waiting for another webshare command to refresh the login: %w", err)
+	}
+	return func() { _ = lock.Unlock() }, nil
 }
 
 // Save stores the credentials in the OS keyring, falling back to a file only
