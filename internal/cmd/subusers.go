@@ -31,7 +31,7 @@ func newSubusersListCmd(flags *rootFlags) *cobra.Command {
 		Short: "List sub-users",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -85,7 +85,7 @@ func newSubusersCreateCmd(flags *rootFlags) *cobra.Command {
 			if label == "" {
 				return usagef("--label is required")
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -153,7 +153,7 @@ func newSubusersUpdateCmd(flags *rootFlags) *cobra.Command {
 			if !changed {
 				return usagef("nothing to update; pass --label, --bandwidth or --max-threads")
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -192,7 +192,7 @@ func newSubusersDeleteCmd(flags *rootFlags) *cobra.Command {
 			if err := confirm(cmd, yes, fmt.Sprintf("delete sub-user %d", id)); err != nil {
 				return err
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}

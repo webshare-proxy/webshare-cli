@@ -22,7 +22,7 @@ func newNotificationsCmd(flags *rootFlags) *cobra.Command {
 		Short: "List account notifications (undismissed by default)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -65,7 +65,7 @@ func newNotificationsCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return usagef("notification ID must be a number, got %q", args[0])
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}

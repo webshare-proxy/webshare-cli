@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/webshare-proxy/webshare-cli/internal/auth"
 	"github.com/webshare-proxy/webshare-cli/internal/output"
 	webshare "github.com/webshare-proxy/webshare-go"
 )
@@ -35,12 +36,16 @@ func newRootCmd() (*cobra.Command, *rootFlags) {
 		Short: "Manage Webshare proxies from the command line",
 		Long: `webshare manages your Webshare proxies, plans and account from the command line.
 
-Authentication reads the WEBSHARE_API_KEY environment variable; create a key
-on the API Keys page of the Webshare dashboard.
+Sign in with "webshare login", which opens your browser and stores the token
+in your keychain. WEBSHARE_API_KEY also works and takes precedence; create a
+key on the API Keys page of the Webshare dashboard.
 
 Output adapts to where it goes: tables on a terminal, tab-separated values in
 a pipe, and --format csv/json/txt where structured output is useful.`,
-		Example: `  # Feed your proxy list to another tool
+		Example: `  # Sign in through the browser
+  webshare login
+
+  # Feed your proxy list to another tool
   webshare proxies list --limit 0 > proxies.txt
   webshare proxies list --format csv --limit 0 > proxies.csv
 
@@ -63,6 +68,8 @@ a pipe, and --format csv/json/txt where structured output is useful.`,
 	_ = root.PersistentFlags().MarkHidden("insecure")
 
 	root.AddCommand(
+		newLoginCmd(flags),
+		newLogoutCmd(flags),
 		newProxiesCmd(flags),
 		newProxyURLCmd(flags),
 		newPlansCmd(flags),
@@ -130,7 +137,7 @@ func renderError(err error) string {
 			lines = append(lines, fmt.Sprintf("the API returned HTTP %d", apiErr.StatusCode))
 		}
 		if apiErr.StatusCode == 401 {
-			lines = append(lines, "check that WEBSHARE_API_KEY holds a valid API key")
+			lines = append(lines, "run `webshare login`, or check that WEBSHARE_API_KEY holds a valid API key")
 		}
 		if apiErr.Code != "" {
 			ref := "(code " + apiErr.Code
@@ -151,31 +158,53 @@ func renderError(err error) string {
 	return err.Error()
 }
 
-// newClient builds the SDK client from the environment and global flags.
-func newClient(flags *rootFlags) (*webshare.Client, error) {
+// resolveBaseURL is the API the command talks to: the flag, then the
+// environment, then the SDK's own default.
+func resolveBaseURL(flags *rootFlags) string {
+	if flags.baseURL != "" {
+		return flags.baseURL
+	}
+	if fromEnv := os.Getenv("WEBSHARE_BASE_URL"); fromEnv != "" {
+		return fromEnv
+	}
+	return webshare.DefaultBaseURL
+}
+
+// httpClient returns the transport the SDK and the login share, so --insecure
+// reaches a test environment's self-signed certificate on both.
+func httpClient(flags *rootFlags) *http.Client {
+	if !flags.insecure {
+		return nil
+	}
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+}
+
+// newClient builds the SDK client from the environment and global flags. An
+// API key in the environment wins over a stored login: it is the explicit
+// choice, and it is what a script sets on purpose.
+func newClient(ctx context.Context, flags *rootFlags) (*webshare.Client, error) {
+	baseURL := resolveBaseURL(flags)
 	opts := []webshare.RequestOption{
 		webshare.WithSource("WebshareCLI/" + version + " (Go; " + runtime.Version() + ")"),
+		webshare.WithBaseURL(baseURL),
 	}
-	if flags.insecure {
-		opts = append(opts, webshare.WithHTTPClient(&http.Client{
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		}))
+	if client := httpClient(flags); client != nil {
+		opts = append(opts, webshare.WithHTTPClient(client))
 	}
-	baseURL := flags.baseURL
-	if baseURL == "" {
-		baseURL = os.Getenv("WEBSHARE_BASE_URL")
-	}
-	if baseURL != "" {
-		opts = append(opts, webshare.WithBaseURL(baseURL))
-	}
-	client, err := webshare.NewClient(opts...)
-	if err != nil {
-		if os.Getenv("WEBSHARE_API_KEY") == "" {
-			return nil, errors.New("WEBSHARE_API_KEY is not set — create an API key on the API Keys page of the Webshare dashboard and export it:\n  export WEBSHARE_API_KEY=your-key")
+	if os.Getenv("WEBSHARE_API_KEY") == "" {
+		credentials, err := auth.Load(baseURL)
+		if errors.Is(err, auth.ErrNoCredentials) {
+			return nil, errors.New("not signed in: run `webshare login`, or export an API key from the API Keys page of the Webshare dashboard:\n  export WEBSHARE_API_KEY=your-key")
 		}
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, webshare.WithTokenSource(
+			auth.NewTokenSource(ctx, authConfig(flags, credentials.Scopes), credentials)))
 	}
-	return client, nil
+	return webshare.NewClient(opts...)
 }
 
 // resolvePlanID returns the plan to operate on: the --plan flag when given,

@@ -12,7 +12,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/webshare-proxy/webshare-cli/internal/auth"
+	"github.com/zalando/go-keyring"
 )
+
+// TestMain keeps the whole suite away from the developer's own keychain: the
+// CLI reads a stored login whenever WEBSHARE_API_KEY is unset.
+func TestMain(m *testing.M) {
+	keyring.MockInit()
+	os.Exit(m.Run())
+}
 
 // runCLI executes the CLI in-process against args and returns captured
 // stdout and the exit code.
@@ -303,5 +313,64 @@ func TestProxiesListShorterThanLimitIsWhole(t *testing.T) {
 	}
 	if got := len(strings.Split(strings.TrimSpace(out), "\n")); got != 2 {
 		t.Errorf("printed %d proxies, want both", got)
+	}
+}
+
+func TestAStoredLoginIsSentAsABearerToken(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "")
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":1,"email":"user@webshare.io"}`)
+	}))
+	t.Cleanup(server.Close)
+	if err := auth.Save(server.URL, &auth.Credentials{
+		AccessToken: "an-access-token", Expiry: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seeding the stored login: %v", err)
+	}
+
+	out, code := runCLI(t, "whoami", "--base-url", server.URL)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if out != "user@webshare.io\n" {
+		t.Errorf("output = %q", out)
+	}
+	if authorization != "Bearer an-access-token" {
+		t.Errorf("Authorization = %q, want the stored token as a Bearer", authorization)
+	}
+}
+
+func TestAnAPIKeyInTheEnvironmentWinsOverAStoredLogin(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "the-api-key")
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":1,"email":"user@webshare.io"}`)
+	}))
+	t.Cleanup(server.Close)
+	if err := auth.Save(server.URL, &auth.Credentials{
+		AccessToken: "an-access-token", Expiry: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seeding the stored login: %v", err)
+	}
+
+	if _, code := runCLI(t, "whoami", "--base-url", server.URL); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+
+	if authorization != "Token the-api-key" {
+		t.Errorf("Authorization = %q, want the environment's API key", authorization)
+	}
+}
+
+func TestLogoutWithoutALoginSaysSoAndSucceeds(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "")
+	if _, code := runCLI(t, "logout", "--base-url", "https://nobody.example.com"); code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
 	}
 }

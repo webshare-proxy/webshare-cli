@@ -16,6 +16,8 @@ go build -o webshare .
 main.go              entrypoint (signal handling, exit code)
 internal/cmd/        one file per command group; root.go has global flags,
                      the client factory and error rendering
+internal/auth/       the OAuth login: PKCE on a loopback port, the token
+                     store (OS keyring, file fallback) and token refresh
 internal/output/     tables, TSV, CSV, JSON; terminal/pipe detection, colors
 ```
 
@@ -35,7 +37,17 @@ export WEBSHARE_BASE_URL=https://proxy.dev.webshare.io
 ```
 
 `--insecure` is a hidden flag that skips TLS verification — test
-environments only.
+environments only. It applies to the login as well as to API calls.
+
+`webshare login` identifies itself with a client id registered in production.
+A test environment has its own, so point the CLI at it:
+
+```sh
+export WEBSHARE_OAUTH_CLIENT_ID=webshare-cli
+```
+
+Tokens are stored per API host, so a login against a test environment never
+stands in for the production one.
 
 ## Checks
 

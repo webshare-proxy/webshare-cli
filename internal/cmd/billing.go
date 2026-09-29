@@ -21,7 +21,7 @@ func newTransactionsCmd(flags *rootFlags) *cobra.Command {
 		Short: "List payment transactions (newest first)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -74,7 +74,7 @@ pass -o - to write the PDF to stdout.`,
 			if err != nil {
 				return usagef("transaction ID must be a number, got %q", args[0])
 			}
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}

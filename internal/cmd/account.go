@@ -13,10 +13,10 @@ import (
 func newWhoamiCmd(flags *rootFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
-		Short: "Show the account the API key belongs to",
+		Short: "Show the account these credentials belong to",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -28,6 +28,7 @@ func newWhoamiCmd(flags *rootFlags) *cobra.Command {
 				return output.JSON(os.Stdout, profile)
 			}
 			fmt.Println(profile.Email)
+			fmt.Fprintln(os.Stderr, output.NewStyler(os.Stderr).Dim("via "+credentialSource()))
 			return nil
 		},
 	}
@@ -39,7 +40,7 @@ func newIPCmd(flags *rootFlags) *cobra.Command {
 		Short: "Show your current public IP address",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
@@ -62,7 +63,7 @@ func newAccountCmd(flags *rootFlags) *cobra.Command {
 		Short: "Show account, subscription and active plan at a glance",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newClient(flags)
+			client, err := newClient(cmd.Context(), flags)
 			if err != nil {
 				return err
 			}
