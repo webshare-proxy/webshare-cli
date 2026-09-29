@@ -202,7 +202,7 @@ func newClient(ctx context.Context, flags *rootFlags) (*webshare.Client, error) 
 			return nil, err
 		}
 		opts = append(opts, webshare.WithTokenSource(
-			auth.NewTokenSource(ctx, authConfig(flags, credentials.Scopes), credentials)))
+			auth.NewTokenSource(authConfig(flags, credentials.Scopes), credentials)))
 	}
 	return webshare.NewClient(opts...)
 }

@@ -343,22 +343,15 @@ func revoke(ctx context.Context, cfg Config, endpoint, token string) error {
 }
 
 // NewTokenSource presents the stored access token to the API and refreshes it
-// when it expires. The context it is built with is the one a refresh uses,
-// because golang.org/x/oauth2 takes no context per call.
-func NewTokenSource(ctx context.Context, cfg Config, credentials *Credentials) webshare.TokenSource {
-	flow := &oauth2.Config{
-		ClientID: cfg.ClientID,
-		Endpoint: oauth2.Endpoint{TokenURL: credentials.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams},
-	}
+// when it expires.
+func NewTokenSource(cfg Config, credentials *Credentials) webshare.TokenSource {
 	return &persistingSource{
-		baseURL: cfg.BaseURL,
-		stored:  credentials,
-		source: flow.TokenSource(cfg.oauthContext(ctx), &oauth2.Token{
-			AccessToken:  credentials.AccessToken,
-			RefreshToken: credentials.RefreshToken,
-			Expiry:       credentials.Expiry,
-			TokenType:    "Bearer",
-		}),
+		cfg: cfg,
+		flow: &oauth2.Config{
+			ClientID: cfg.ClientID,
+			Endpoint: oauth2.Endpoint{TokenURL: credentials.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams},
+		},
+		stored: credentials,
 	}
 }
 
@@ -366,31 +359,57 @@ func NewTokenSource(ctx context.Context, cfg Config, credentials *Credentials) w
 // rotates both tokens on every refresh and refuses a refresh token twice, so
 // a rotation that is not stored leaves the next command with nothing usable.
 type persistingSource struct {
-	baseURL string
-	// mutex guards stored: oauth2's own source is safe for concurrent use and
-	// this wrapper has to be too, or two refreshes race and the loser spends a
-	// refresh token the server will never accept again.
+	cfg  Config
+	flow *oauth2.Config
+	// mutex guards stored: the client may ask for a token from several
+	// goroutines, and only one of them may refresh.
 	mutex  sync.Mutex
 	stored *Credentials
-	source oauth2.TokenSource
 }
 
-func (p *persistingSource) Token(context.Context) (webshare.Token, error) {
+func (p *persistingSource) Token(ctx context.Context) (webshare.Token, error) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	token, err := p.source.Token()
+	if fresh(p.stored) {
+		return bearer(p.stored), nil
+	}
+	// Commands run side by side each start with the same refresh token, so
+	// they take turns: whoever gets the lock first refreshes, and the rest
+	// pick up the pair it stored instead of refreshing again.
+	unlock, err := lockRefresh(ctx)
+	if err != nil {
+		return webshare.Token{}, err
+	}
+	defer unlock()
+	latest, err := Load(p.cfg.BaseURL)
 	if err != nil {
 		return webshare.Token{}, fmt.Errorf("refreshing the stored login (run `webshare login` again): %w", err)
 	}
-	if token.AccessToken != p.stored.AccessToken {
-		p.stored.AccessToken = token.AccessToken
-		p.stored.RefreshToken = token.RefreshToken
-		p.stored.Expiry = token.Expiry
-		if err := Save(p.baseURL, p.stored); err != nil {
-			return webshare.Token{}, err
-		}
+	p.stored = latest
+	if fresh(latest) {
+		return bearer(latest), nil
 	}
-	return webshare.Token{Value: token.AccessToken, Scheme: "Bearer"}, nil
+	token, err := p.flow.TokenSource(p.cfg.oauthContext(ctx), &oauth2.Token{RefreshToken: latest.RefreshToken}).Token()
+	if err != nil {
+		return webshare.Token{}, fmt.Errorf("refreshing the stored login (run `webshare login` again): %w", err)
+	}
+	latest.AccessToken = token.AccessToken
+	latest.RefreshToken = token.RefreshToken
+	latest.Expiry = token.Expiry
+	if err := Save(p.cfg.BaseURL, latest); err != nil {
+		return webshare.Token{}, err
+	}
+	return bearer(latest), nil
+}
+
+// fresh reports whether the access token can still be sent, with the same
+// margin before expiry that golang.org/x/oauth2 allows.
+func fresh(credentials *Credentials) bool {
+	return (&oauth2.Token{AccessToken: credentials.AccessToken, Expiry: credentials.Expiry}).Valid()
+}
+
+func bearer(credentials *Credentials) webshare.Token {
+	return webshare.Token{Value: credentials.AccessToken, Scheme: "Bearer"}
 }
 
 func randomState() (string, error) {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,6 +89,11 @@ func newFakeAS(t *testing.T) *fakeAS {
 			}
 			as.grantType = r.PostForm.Get("grant_type")
 			if as.grantType == "refresh_token" {
+				if r.PostForm.Get("refresh_token") != "refresh-1" || as.refreshed > 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": "invalid_grant"})
+					return
+				}
 				as.refreshed++
 				writeJSON(w, map[string]any{
 					"access_token": "access-2", "refresh_token": "refresh-2",
@@ -220,7 +226,7 @@ func TestExpiredAccessTokenIsRefreshedAndTheRotatedPairIsStored(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	source := NewTokenSource(context.Background(), as.config(t), expired)
+	source := NewTokenSource(as.config(t), expired)
 	token, err := source.Token(context.Background())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
@@ -235,6 +241,48 @@ func TestExpiredAccessTokenIsRefreshedAndTheRotatedPairIsStored(t *testing.T) {
 	}
 	if stored.AccessToken != "access-2" || stored.RefreshToken != "refresh-2" {
 		t.Errorf("stored = %+v, want the rotated pair; PCP will not accept refresh-1 again", stored)
+	}
+}
+
+func TestCommandsRunningSideBySideRefreshOnlyOnce(t *testing.T) {
+	isolate(t)
+	// The file store, because it is what separate processes share; the mock
+	// keyring lives in this process's memory.
+	keyring.MockInitWithError(keyring.ErrUnsupportedPlatform)
+	as := newFakeAS(t)
+	expired := Credentials{
+		AccessToken: "access-1", RefreshToken: "refresh-1",
+		Expiry: time.Now().Add(-time.Hour), Issuer: as.issuer,
+		TokenEndpoint: as.server.URL + "/oauth/token/",
+	}
+	if err := Save(as.server.URL, &expired); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Each source stands in for a separate command: its own copy of what was
+	// stored when it started, and nothing in memory shared with the other.
+	tokens := make([]string, 2)
+	failures := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range tokens {
+		credentials := expired
+		source := NewTokenSource(as.config(t), &credentials)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			token, err := source.Token(context.Background())
+			tokens[i], failures[i] = token.Value, err
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range failures {
+		if err != nil {
+			t.Errorf("command %d: %v", i, err)
+		}
+	}
+	if as.refreshed != 1 || tokens[0] != "access-2" || tokens[1] != "access-2" {
+		t.Errorf("refreshed %d times, tokens = %v; want one refresh whose token both commands use", as.refreshed, tokens)
 	}
 }
 
