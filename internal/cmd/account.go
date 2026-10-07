@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"github.com/webshare-proxy/webshare-cli/internal/app"
 	"github.com/webshare-proxy/webshare-cli/internal/output"
-	webshare "github.com/webshare-proxy/webshare-go"
 )
 
 func newWhoamiCmd(flags *rootFlags) *cobra.Command {
@@ -67,29 +67,14 @@ func newAccountCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
-			profile, err := client.Profile.Get(ctx)
+			account, err := app.GetAccount(cmd.Context(), client)
 			if err != nil {
 				return err
-			}
-			subscription, err := client.Subscription.Get(ctx)
-			if err != nil {
-				return err
-			}
-			var plan *webshare.Plan
-			if subscription.Plan != 0 {
-				plan, err = client.Plans.Get(ctx, subscription.Plan)
-				if err != nil {
-					return err
-				}
 			}
 			if flags.asJSON {
-				return output.JSON(os.Stdout, map[string]any{
-					"profile":      profile,
-					"subscription": subscription,
-					"plan":         plan,
-				})
+				return output.JSON(os.Stdout, account)
 			}
+			profile, subscription, plan := account.Profile, account.Subscription, account.Plan
 			pairs := [][2]string{
 				{"Email", profile.Email},
 				{"Member since", profile.CreatedAt.Format("2006-01-02")},

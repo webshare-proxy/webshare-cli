@@ -374,3 +374,126 @@ func TestLogoutWithoutALoginSaysSoAndSucceeds(t *testing.T) {
 		t.Errorf("exit code = %d, want 0", code)
 	}
 }
+
+func accountServer(t *testing.T, planID int) *httptest.Server {
+	t.Helper()
+	responses := map[string]any{
+		"GET /api/v2/profile/": map[string]any{"id": 1, "email": "user@webshare.io", "created_at": "2024-03-01T10:00:00Z"},
+		"GET /api/v2/subscription/": map[string]any{
+			"id": 7, "plan": planID, "free_credits": 2.5, "term": "monthly",
+			"end_date": "2026-11-01T00:00:00Z", "renewals_enabled": true, "throttled": false,
+		},
+	}
+	if planID != 0 {
+		responses["GET /api/v2/subscription/plan/"+strconv.Itoa(planID)+"/"] = map[string]any{
+			"id": planID, "proxy_type": "shared", "proxy_subtype": "default", "proxy_count": 100, "bandwidth_limit": 250,
+		}
+	}
+	return newAPIServer(t, responses)
+}
+
+func TestAccountShowsProfileSubscriptionAndActivePlan(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	server := accountServer(t, 42)
+	out, code := runCLI(t, "account", "--base-url", server.URL)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	want := "Email         user@webshare.io\n" +
+		"Member since  2024-03-01\n" +
+		"Free credits  $2.50\n" +
+		"Term          monthly\n" +
+		"Renews        2026-11-01\n" +
+		"Auto-renewal  true\n" +
+		"Active plan   #42 shared/default, 100 proxies, 250 GB\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestAccountWithoutAPlanDoesNotFetchOne(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	server := accountServer(t, 0)
+	out, code := runCLI(t, "account", "--base-url", server.URL)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if strings.Contains(out, "Active plan") {
+		t.Errorf("output mentions an active plan: %q", out)
+	}
+}
+
+func TestAccountJSONNestsProfileSubscriptionAndPlan(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	server := accountServer(t, 42)
+	out, code := runCLI(t, "account", "--json", "--base-url", server.URL)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	var got struct {
+		Profile      struct{ Email string }
+		Subscription struct{ Plan int }
+		Plan         struct{ ID int }
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decoding %q: %v", out, err)
+	}
+	if got.Profile.Email != "user@webshare.io" || got.Subscription.Plan != 42 || got.Plan.ID != 42 {
+		t.Errorf("unexpected JSON: %s", out)
+	}
+}
+
+func TestPlansListHidesCancelledPlansUnlessAll(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	server := newAPIServer(t, map[string]any{
+		"GET /api/v2/subscription/plan/": envelope(
+			map[string]any{"id": 1, "status": "cancelled"},
+			map[string]any{"id": 2, "status": "active"},
+		),
+	})
+	for args, want := range map[string][]int{"": {2}, "--all": {1, 2}} {
+		cli := []string{"plans", "list", "--json", "--base-url", server.URL}
+		if args != "" {
+			cli = append(cli, args)
+		}
+		out, code := runCLI(t, cli...)
+		if code != 0 {
+			t.Fatalf("%v: exit code = %d, want 0", cli, code)
+		}
+		var plans []struct{ ID int }
+		if err := json.Unmarshal([]byte(out), &plans); err != nil {
+			t.Fatalf("%v: decoding %q: %v", cli, out, err)
+		}
+		var got []int
+		for _, p := range plans {
+			got = append(got, p.ID)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%v: plan IDs = %v, want %v", cli, got, want)
+		}
+	}
+}
+
+func TestIPAuthRemoveResolvesAnIPAddressToItsID(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	server := newAPIServer(t, map[string]any{
+		"GET /api/v2/proxy/ipauthorization/": envelope(
+			map[string]any{"id": 3, "ip_address": "198.51.100.1"},
+			map[string]any{"id": 4, "ip_address": "198.51.100.2"},
+		),
+		"DELETE /api/v2/proxy/ipauthorization/4/": nil,
+	})
+	if _, code := runCLI(t, "ipauth", "remove", "198.51.100.2", "--base-url", server.URL); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+}
+
+func TestIPAuthRemoveOfAnUnknownIPFailsWithoutDeleting(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	server := newAPIServer(t, map[string]any{
+		"GET /api/v2/proxy/ipauthorization/": envelope(map[string]any{"id": 3, "ip_address": "198.51.100.1"}),
+	})
+	if _, code := runCLI(t, "ipauth", "remove", "198.51.100.9", "--base-url", server.URL); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+}

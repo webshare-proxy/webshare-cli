@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/webshare-proxy/webshare-cli/internal/app"
 	"github.com/webshare-proxy/webshare-cli/internal/output"
 	webshare "github.com/webshare-proxy/webshare-go"
 )
@@ -81,19 +82,9 @@ the server renders in a single request.`,
 			for _, c := range countries {
 				params.CountryCodeIn = append(params.CountryCodeIn, strings.ToUpper(c))
 			}
-			// Read one past the limit so we can tell a list that happens to
-			// end exactly at the limit from one that was cut short.
-			var proxies []webshare.Proxy
-			truncated := false
-			for proxy, err := range client.Proxies.ListAll(cmd.Context(), params) {
-				if err != nil {
-					return err
-				}
-				if limit > 0 && len(proxies) == limit {
-					truncated = true
-					break
-				}
-				proxies = append(proxies, proxy)
+			proxies, truncated, err := app.ListProxies(cmd.Context(), client, params, limit)
+			if err != nil {
+				return err
 			}
 			if err := writeProxies(cmd, flags, proxies, format); err != nil {
 				return err

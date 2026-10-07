@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"github.com/webshare-proxy/webshare-cli/internal/app"
 	"github.com/webshare-proxy/webshare-cli/internal/output"
 	webshare "github.com/webshare-proxy/webshare-go"
 )
@@ -37,15 +38,9 @@ func newPlansListCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var plans []webshare.Plan
-			for plan, err := range client.Plans.ListAll(cmd.Context(), webshare.PlanListParams{}) {
-				if err != nil {
-					return err
-				}
-				if !all && plan.Status != webshare.PlanActive {
-					continue
-				}
-				plans = append(plans, plan)
+			plans, err := app.ListPlans(cmd.Context(), client, all)
+			if err != nil {
+				return err
 			}
 			if flags.asJSON {
 				return output.JSON(os.Stdout, plans)
