@@ -34,6 +34,10 @@ const sidebarWidth = 26
 // columnGap is the space between columns in every panel.
 const columnGap = 4
 
+// margin starts every line of text in a panel, aligned with the tables,
+// whose cells are padded by columnGap/2.
+const margin = "  "
+
 // The tabs of a plan, on the right of the plans sidebar.
 var tabs = []string{"Proxies", "Bandwidth", "Errors", "Activity", "Authorized IPs", "Sub-users"}
 
@@ -78,9 +82,10 @@ type accountLoaded struct {
 type tabLoaded struct {
 	planID int
 	tab    int
-	// query is what the answer depends on besides the plan (mode, filters,
-	// range), so a cached answer for another one is not reused.
-	query string
+	// key is where the answer is cached (cacheKey): it holds what the answer
+	// depends on besides the plan, so an answer for another mode, filter or
+	// range is not reused.
+	key string
 	// requestedAt is when the request started: it orders answers, so a late
 	// older one never replaces a newer one, and it starts the cacheTTL.
 	requestedAt time.Time
@@ -133,7 +138,11 @@ type model struct {
 	plan int
 	// moves counts sidebar moves, to drop a planSettled overtaken by one.
 	moves int
-	tab   int
+	// frame advances the loading shimmer; ticking is set while a
+	// shimmerTick is scheduled, so only one runs at a time.
+	frame   int
+	ticking bool
+	tab     int
 	// focus is 0 on the sidebar (or the screen), 1 on the table.
 	focus  int
 	width  int
@@ -149,10 +158,13 @@ type model struct {
 	// shown is the selected plan's answer for each tab; a missing tab is
 	// loading.
 	shown map[int]*tabLoaded
-	// cache holds the last successful answer of each tab, keyed by plan ID
-	// then tab. An answer older than cacheTTL is fetched again the next time
-	// its plan is shown. Refresh (r) drops the plan's entry.
-	cache map[int]map[int]tabLoaded
+	// cache holds the last successful answers, keyed by plan ID then
+	// cacheKey. An answer older than cacheTTL is fetched again the next time
+	// its tab is shown. Refresh (r) drops the plan's entry.
+	cache map[int]map[string]tabLoaded
+	// inflight marks the requests started and not answered yet, by plan and
+	// cache key, so revisiting a tab does not send its request twice.
+	inflight map[string]bool
 
 	proxies   table.Model
 	proxyList []webshare.Proxy
@@ -196,12 +208,13 @@ func newTable(columns ...table.Column) table.Model {
 func newModel(ctx context.Context, client *webshare.Client) model {
 	return model{
 		ctx: ctx, client: client, mode: "direct",
-		input:   textinput.New(),
-		notices: map[int]string{},
-		shown:   map[int]*tabLoaded{},
-		cache:   map[int]map[int]tabLoaded{},
-		ranges:  map[int]int{bandwidthTab: rangeCycle, errorsTab: rangeCycle, activityTab: range24h},
-		hscroll: map[int]int{},
+		input:    textinput.New(),
+		notices:  map[int]string{},
+		shown:    map[int]*tabLoaded{},
+		cache:    map[int]map[string]tabLoaded{},
+		inflight: map[string]bool{},
+		ranges:   map[int]int{bandwidthTab: rangeCycle, errorsTab: rangeCycle, activityTab: range24h},
+		hscroll:  map[int]int{},
 		notifications: newTable(
 			table.Column{Title: "NOTIFICATION", Width: 24},
 			table.Column{Title: "EMAIL", Width: 5},
@@ -274,8 +287,11 @@ func (m model) planID() int {
 	return 0
 }
 
+// Init names the terminal window and loads the account. Sequence, not
+// Batch: bubbletea v1.3.7 would run a batched request on its event loop (see
+// Update).
 func (m model) Init() tea.Cmd {
-	return m.loadAccount
+	return tea.Sequence(tea.SetWindowTitle("webshare"), m.loadAccount)
 }
 
 func (m model) loadAccount() tea.Msg {
@@ -294,7 +310,7 @@ func (m model) showPlan() (model, tea.Cmd) {
 	// A notice belongs to the plan it was about.
 	m.notices = map[int]string{accountTarget: m.notices[accountTarget]}
 	m.moves++
-	if m.planID() == 0 || m.missingLoads() == nil {
+	if _, ok := m.fresh(m.tab); m.planID() == 0 || ok {
 		return m, nil
 	}
 	move := m.moves
@@ -317,28 +333,38 @@ func (m model) applyCache() model {
 	return m
 }
 
-// missingLoads fetches the tabs the selected plan has no fresh answer for.
-func (m model) missingLoads() tea.Cmd {
-	if m.planID() == 0 {
+// loadMissing fetches the visible tab when the selected plan has no fresh
+// answer for it and none is on its way. The other tabs load when opened.
+func (m model) loadMissing() tea.Cmd {
+	if _, ok := m.fresh(m.tab); m.planID() == 0 || ok || m.inflight[m.inflightKey(m.tab)] {
 		return nil
 	}
-	var cmds []tea.Cmd
-	for tab := range tabs {
-		if _, ok := m.fresh(tab); !ok {
-			cmds = append(cmds, m.load(tab))
-		}
-	}
-	return tea.Batch(cmds...)
+	m.inflight[m.inflightKey(m.tab)] = true
+	return m.load(m.tab)
 }
 
-// fresh is the selected plan's cached answer for tab, unless it expired or
-// answers another query.
+// fresh is the selected plan's cached answer for tab, unless it expired.
 func (m model) fresh(tab int) (tabLoaded, bool) {
-	msg, ok := m.cache[m.planID()][tab]
-	if !ok || time.Since(msg.requestedAt) >= cacheTTL || msg.query != m.query(tab) {
+	msg, ok := m.cache[m.planID()][m.cacheKey(tab)]
+	if !ok || time.Since(msg.requestedAt) >= cacheTTL {
 		return tabLoaded{}, false
 	}
+	msg.tab = tab
 	return msg, true
+}
+
+// cacheKey is where a tab's answer is cached. Bandwidth and Errors share the
+// aggregate stats, so on the same range they share one request and answer.
+func (m model) cacheKey(tab int) string {
+	name := tabs[tab]
+	if tab == bandwidthTab || tab == errorsTab {
+		name = "aggregate"
+	}
+	return name + "|" + m.query(tab)
+}
+
+func (m model) inflightKey(tab int) string {
+	return strconv.Itoa(m.planID()) + "|" + m.cacheKey(tab)
 }
 
 // query is what a tab's answer depends on besides the plan.
@@ -358,8 +384,8 @@ func (m model) query(tab int) string {
 func (m model) load(tab int) tea.Cmd {
 	// Everything the fetch reads is taken here: it runs on another goroutine
 	// while Update keeps changing the model's maps.
-	planID, query, r := m.planID(), m.query(tab), m.ranges[tab]
-	msg := tabLoaded{planID: planID, tab: tab, query: query, requestedAt: time.Now()}
+	planID, r := m.planID(), m.ranges[tab]
+	msg := tabLoaded{planID: planID, tab: tab, key: m.cacheKey(tab), requestedAt: time.Now()}
 	return func() tea.Msg {
 		msg.data, msg.truncated, msg.err = m.fetch(tab, planID, r)
 		return msg
@@ -423,7 +449,71 @@ func (m model) reloadTab(tab int) (model, tea.Cmd) {
 	return m, m.load(tab)
 }
 
+// shimmerTick advances the loading shimmer.
+type shimmerTick struct{}
+
+const shimmerInterval = 90 * time.Millisecond
+
+// Update runs update and keeps the shimmer ticking while something shows as
+// loading; with nothing loading no tick is scheduled.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(shimmerTick); ok {
+		m.frame++
+		m.ticking = false
+	}
+	next, cmd := m.update(msg)
+	m = next.(model)
+	if m.loading() && !m.ticking {
+		m.ticking = true
+		tick := tea.Tick(shimmerInterval, func(time.Time) tea.Msg { return shimmerTick{} })
+		if cmd == nil {
+			return m, tick
+		}
+		// ponytail: bubbletea v1.3.7 runs a batch's commands inside its event
+		// loop (`go p.Send(cmd())` calls cmd() first), so a request batched
+		// with the tick would freeze the UI until it answers. A sequence runs
+		// the batch off the loop; the no-op step only keeps Sequence from
+		// unwrapping a lone command. Use a plain tea.Batch from bubbletea
+		// v1.3.9, which needs Go 1.24.
+		cmd = tea.Sequence(tea.Batch(cmd, tick), func() tea.Msg { return nil })
+	}
+	return m, cmd
+}
+
+// loading reports whether the screen shows the loading shimmer.
+func (m model) loading() bool {
+	if m.account == nil && m.accountErr == nil {
+		return true
+	}
+	return m.screen == plansScreen && m.planID() != 0 && m.shown[m.tab] == nil
+}
+
+// shimmerIcons spin in front of the word: a half-filled circle turning,
+// close to the dashboard's loader.
+var shimmerIcons = []string{"◐", "◓", "◑", "◒"}
+
+// shimmer is the loading indicator: a spinning circle, then "loading..." dimmed
+// with a light sweeping across it a letter per frame and resting off the
+// word between sweeps.
+func shimmer(frame int) string {
+	const word = "loading..."
+	position := frame%(len(word)+6) - 1
+	var b strings.Builder
+	b.WriteString(keyStyle.Render(shimmerIcons[frame%len(shimmerIcons)]) + " ")
+	for i, letter := range word {
+		switch i - position {
+		case 0:
+			b.WriteString(keyStyle.Bold(true).Render(string(letter)))
+		case -1, 1:
+			b.WriteString(string(letter))
+		default:
+			b.WriteString(dimStyle.Render(string(letter)))
+		}
+	}
+	return b.String()
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -447,25 +537,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.applyCache()
 		}
 		// A new billing cycle changes the stats tabs' query, so they reload.
-		return m, m.missingLoads()
+		return m, m.loadMissing()
 	case planSettled:
 		if msg.move == m.moves {
-			return m, m.missingLoads()
+			return m, m.loadMissing()
 		}
 		return m, nil
-	// Answers are cached even when their plan is no longer selected; only
-	// the selected plan's, for the current query, are shown.
-	// An answer older than the one already cached or shown is dropped.
+	// Answers are cached even when their plan is no longer selected. Only the
+	// selected plan's are shown, on every tab whose cache key they answer
+	// (Bandwidth and Errors share one). An answer older than the one already
+	// cached or shown is dropped.
 	case tabLoaded:
-		cached, ok := m.cache[msg.planID][msg.tab]
+		delete(m.inflight, strconv.Itoa(msg.planID)+"|"+msg.key)
+		cached, ok := m.cache[msg.planID][msg.key]
 		if msg.err == nil && !(ok && msg.requestedAt.Before(cached.requestedAt)) {
 			if m.cache[msg.planID] == nil {
-				m.cache[msg.planID] = map[int]tabLoaded{}
+				m.cache[msg.planID] = map[string]tabLoaded{}
 			}
-			m.cache[msg.planID][msg.tab] = msg
+			m.cache[msg.planID][msg.key] = msg
 		}
-		shown := m.shown[msg.tab]
-		if msg.planID == m.planID() && msg.query == m.query(msg.tab) && !(shown != nil && msg.requestedAt.Before(shown.requestedAt)) {
+		if msg.planID != m.planID() {
+			return m, nil
+		}
+		for tab := range tabs {
+			shown := m.shown[tab]
+			if m.cacheKey(tab) != msg.key || (shown != nil && msg.requestedAt.Before(shown.requestedAt)) {
+				continue
+			}
+			msg.tab = tab
 			m.apply(msg)
 		}
 		return m, nil
@@ -481,7 +580,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The write's plan may no longer be selected: its cached tab goes
 		// either way, and only a selected plan shows the notice and reloads.
 		if msg.err == nil {
-			delete(m.cache[msg.planID], msg.target)
+			for key, cached := range m.cache[msg.planID] {
+				if cached.tab == msg.target {
+					delete(m.cache[msg.planID], key)
+				}
+			}
 		}
 		if msg.planID != m.planID() {
 			return m, nil
@@ -609,13 +712,16 @@ func (m model) switchScreen(screen int) model {
 func (m model) plansAction(msg tea.KeyMsg) (next tea.Model, cmd tea.Cmd, ok bool) {
 	key := msg.String()
 	if index := strings.Index("123456", key); index >= 0 && len(key) == 1 {
-		return m.switchTab(index), nil, true
+		next, cmd = m.switchTab(index)
+		return next, cmd, true
 	}
 	switch key {
 	case "]":
-		return m.switchTab((m.tab + 1) % len(tabs)), nil, true
+		next, cmd = m.switchTab((m.tab + 1) % len(tabs))
+		return next, cmd, true
 	case "[":
-		return m.switchTab((m.tab + len(tabs) - 1) % len(tabs)), nil, true
+		next, cmd = m.switchTab((m.tab + len(tabs) - 1) % len(tabs))
+		return next, cmd, true
 	}
 	if m.planID() == 0 {
 		return m, nil, false
@@ -712,16 +818,16 @@ func (m model) tableView() string {
 	return strings.Join(lines, "\n")
 }
 
-// switchTab moves to another tab and focuses its table; a tab without one
-// (Bandwidth) leaves the focus on the sidebar.
-func (m model) switchTab(tab int) model {
+// switchTab moves to another tab, focuses its table (a tab without one,
+// Bandwidth, leaves the focus on the sidebar) and loads it if needed.
+func (m model) switchTab(tab int) (model, tea.Cmd) {
 	m = m.switchScreen(plansScreen)
 	m.tab = tab
 	if t := m.focusable(); t != nil {
 		m.focus = 1
 		t.Focus()
 	}
-	return m
+	return m, m.loadMissing()
 }
 
 func (m model) startForm(fields [][2]string, submit func(m model, values []string) (model, tea.Cmd)) (model, tea.Cmd) {
@@ -768,8 +874,13 @@ func (m model) reload() (model, tea.Cmd) {
 		return m, m.loadAccount
 	}
 	delete(m.cache, m.planID())
+	for key := range m.inflight {
+		if strings.HasPrefix(key, strconv.Itoa(m.planID())+"|") {
+			delete(m.inflight, key)
+		}
+	}
 	m = m.applyCache()
-	return m, m.missingLoads()
+	return m, m.loadMissing()
 }
 
 func (m *model) setProxies(msg tabLoaded) {
@@ -937,7 +1048,7 @@ func keyValues(pairs [][2]string) string {
 	var b strings.Builder
 	for _, pair := range pairs {
 		key := fmt.Sprintf("%-*s", width+columnGap, pair[0])
-		b.WriteString(dimStyle.Render(key) + pair[1] + "\n")
+		b.WriteString(margin + dimStyle.Render(key) + pair[1] + "\n")
 	}
 	return b.String()
 }
@@ -945,13 +1056,15 @@ func keyValues(pairs [][2]string) string {
 // columns renders a static aligned table for the read-only views.
 func columns(header []string, rows [][]string) string {
 	if len(rows) == 0 {
-		return dimStyle.Render("(none)") + "\n"
+		return margin + dimStyle.Render("(none)") + "\n"
 	}
 	var b strings.Builder
 	tw := tabwriter.NewWriter(&b, 0, 4, columnGap, ' ', 0)
-	fmt.Fprintln(tw, strings.Join(header, "\t"))
+	// The margin goes inside the first cell of every line, header included,
+	// so it counts the same towards the first column's width.
+	fmt.Fprintln(tw, margin+strings.Join(header, "\t"))
 	for _, row := range rows {
-		fmt.Fprintln(tw, strings.Join(row, "\t"))
+		fmt.Fprintln(tw, margin+strings.Join(row, "\t"))
 	}
 	tw.Flush()
 	// Style after aligning: escape codes would count towards column widths.
@@ -1008,7 +1121,7 @@ func (m model) View() string {
 // pinStatus puts status in the bottom-left corner under the feedback line,
 // indented like the table's cells.
 func (m model) pinStatus(height int, top, status string) string {
-	bottom := m.bottomLine() + "\n" + strings.Repeat(" ", columnGap/2) + dimStyle.Render(status)
+	bottom := m.bottomLine() + "\n" + margin + dimStyle.Render(status)
 	filler := max(height-2-lipgloss.Height(top)-lipgloss.Height(bottom), 0)
 	return top + "\n" + strings.Repeat("\n", filler) + bottom
 }
@@ -1026,7 +1139,8 @@ func (m model) plansView(height int) string {
 	case m.accountErr != nil:
 		items += "\nerror: " + m.accountErr.Error()
 	case m.account == nil:
-		items = dimStyle.Render("loading…")
+		// Indented like the product names.
+		items = " " + shimmer(m.frame)
 	case len(m.activePlans) == 0:
 		items = dimStyle.Render("no active products")
 	}
@@ -1045,9 +1159,9 @@ func (m model) plansView(height int) string {
 	switch {
 	case m.planID() == 0:
 	case shown == nil:
-		body = dimStyle.Render("loading…")
+		body = margin + shimmer(m.frame)
 	case shown.err != nil:
-		body = "error: " + shown.err.Error()
+		body = margin + "error: " + shown.err.Error()
 	case m.tab == proxiesTab:
 		body = m.pinStatus(height, m.tableView(), m.proxiesStatus()+" · mode "+m.mode)
 	case m.tab == activityTab:
@@ -1070,11 +1184,11 @@ func (m model) plansView(height int) string {
 func (m model) bottomLine() string {
 	switch {
 	case m.form != nil:
-		return m.input.View()
+		return margin + m.input.View()
 	case m.confirm != nil:
-		return m.confirm.question + " " + keyStyle.Render("y/n")
+		return margin + m.confirm.question + " " + keyStyle.Render("y/n")
 	}
-	return m.notices[m.noticeTarget()]
+	return margin + m.notices[m.noticeTarget()]
 }
 
 // allKeybindings is the full list shown by "?", grouped by where they work.

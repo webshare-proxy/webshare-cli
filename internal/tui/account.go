@@ -77,9 +77,9 @@ func (m *model) setAccount(msg accountLoaded) {
 func (m model) accountStatus(width, height int) string {
 	switch {
 	case m.account == nil && m.accountErr != nil:
-		return titledBox("Account", "error: "+m.accountErr.Error(), width, height, false)
+		return titledBox("Account", margin+"error: "+m.accountErr.Error(), width, height, false)
 	case m.account == nil:
-		return titledBox("Account", dimStyle.Render("loading…"), width, height, false)
+		return titledBox("Account", margin+shimmer(m.frame), width, height, false)
 	}
 	return ""
 }
@@ -92,7 +92,7 @@ func (m model) accountView(width, height int) string {
 	}
 	profile := m.account.account.Profile
 	name := strings.TrimSpace(profile.FirstName + " " + profile.LastName)
-	profileBox := titledBox("Profile", keyValues([][2]string{
+	profileBox := titledBox("Account", keyValues([][2]string{
 		{"Email", profile.Email},
 		{"Name", name},
 		{"Timezone", profile.Timezone},
@@ -128,14 +128,14 @@ func (m model) subscriptionView(width, height int) string {
 	rows := make([][]string, 0, len(m.account.plans))
 	for _, p := range m.account.plans {
 		rows = append(rows, []string{
-			strconv.Itoa(p.ID), string(p.Status), string(p.ProxyType), string(p.ProxySubtype),
+			strconv.Itoa(p.ID), string(p.Status), productName(p),
 			strconv.Itoa(p.ProxyCount), output.Bandwidth(p.BandwidthLimit),
 			fmt.Sprintf("$%.2f", p.MonthlyPrice), fmt.Sprintf("$%.2f", p.YearlyPrice), date(p.CreatedAt),
 		})
 	}
 	// ponytail: a static listing, it clips past the screen height; make it a
 	// scrollable table if accounts with long plan histories show up.
-	history := columns([]string{"ID", "STATUS", "TYPE", "SUBTYPE", "PROXIES", "BANDWIDTH", "MONTHLY", "YEARLY", "CREATED"}, rows)
+	history := columns([]string{"ID", "STATUS", "PRODUCT", "PROXIES", "BANDWIDTH", "MONTHLY", "YEARLY", "CREATED"}, rows)
 	rest := height - lipgloss.Height(subscriptionBox)
 	return lipgloss.JoinVertical(lipgloss.Left, subscriptionBox,
 		titledBox("Plan history", history, width, max(rest, 3), false))

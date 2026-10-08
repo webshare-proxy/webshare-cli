@@ -113,12 +113,12 @@ func (m model) bandwidthView(width int) string {
 	stats := m.shown[bandwidthTab].data.(*webshare.AggregateStats)
 	plan := m.activePlans[m.plan]
 	var b strings.Builder
-	b.WriteString(dimStyle.Render(m.rangeLabel(m.ranges[bandwidthTab])) + "\n\n")
+	b.WriteString(margin + dimStyle.Render(m.rangeLabel(m.ranges[bandwidthTab])) + "\n\n")
 	if plan.BandwidthLimit > 0 {
 		// The plan limit is in GB and the stats in bytes. The backend counts a
 		// GB as 1024³ bytes (proxycontrolpanel's Plan.get_limit_in_bytes).
 		limit := plan.BandwidthLimit * (1 << 30)
-		b.WriteString(usageBar(float64(stats.BandwidthTotal), float64(stats.BandwidthProjected), limit, max(width-24, 10)))
+		b.WriteString(margin + usageBar(float64(stats.BandwidthTotal), float64(stats.BandwidthProjected), limit, max(width-24, 10)))
 		b.WriteString(fmt.Sprintf("  %.1f%% of %s\n\n", 100*float64(stats.BandwidthTotal)/limit, output.Bandwidth(plan.BandwidthLimit)))
 		b.WriteString(keyValues([][2]string{
 			{"█ Used", output.Bytes(stats.BandwidthTotal)},
@@ -209,7 +209,7 @@ func (m model) errorsSummary() string {
 	if stats.RequestsTotal > 0 {
 		rate = fmt.Sprintf("%.2f%%", 100*float64(stats.RequestsFailed)/float64(stats.RequestsTotal))
 	}
-	return dimStyle.Render(m.rangeLabel(m.ranges[errorsTab])) + "\n" + keyValues([][2]string{
+	return margin + dimStyle.Render(m.rangeLabel(m.ranges[errorsTab])) + "\n" + keyValues([][2]string{
 		{"Total requests", strconv.FormatInt(stats.RequestsTotal, 10)},
 		{"Total errors", strconv.FormatInt(stats.RequestsFailed, 10)},
 		{"Error rate", rate},
