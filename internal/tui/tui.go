@@ -896,12 +896,18 @@ func (m *model) setProxies(msg tabLoaded) {
 	m.proxies.SetRows(rows)
 }
 
+// proxiesStatus is the line under the proxies table: the count, the mode and
+// the country filter, if any.
 func (m model) proxiesStatus() string {
-	msg := m.shown[proxiesTab]
-	if msg.truncated {
-		return fmt.Sprintf("first %d proxies", len(m.proxyList))
+	status := fmt.Sprintf("%d proxies", len(m.proxyList))
+	if m.shown[proxiesTab].truncated {
+		status = fmt.Sprintf("first %d proxies", len(m.proxyList))
 	}
-	return fmt.Sprintf("%d proxies", len(m.proxyList))
+	status += " · mode " + m.mode
+	if len(m.countries) > 0 {
+		status += " · country " + strings.Join(m.countries, ",")
+	}
+	return status
 }
 
 // cliCommand is the CLI equivalent of what the screen or tab shows.
@@ -1163,7 +1169,7 @@ func (m model) plansView(height int) string {
 	case shown.err != nil:
 		body = margin + "error: " + shown.err.Error()
 	case m.tab == proxiesTab:
-		body = m.pinStatus(height, m.tableView(), m.proxiesStatus()+" · mode "+m.mode)
+		body = m.pinStatus(height, m.tableView(), m.proxiesStatus())
 	case m.tab == activityTab:
 		body = m.pinStatus(height, m.tableView(), m.activityStatus())
 	case m.tab == bandwidthTab:
