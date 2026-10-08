@@ -19,7 +19,8 @@ amd64 and arm64; each release includes a `checksums.txt`.
 
 ```sh
 # example: Linux on amd64
-tar -xzf webshare_*_linux_amd64.tar.gz
+curl -fsSLO https://github.com/webshare-proxy/webshare-cli/releases/latest/download/webshare_linux_amd64.tar.gz
+tar -xzf webshare_linux_amd64.tar.gz
 sudo mv webshare /usr/local/bin/
 ```
 

@@ -14,17 +14,27 @@ builds:
     goarch: [amd64, arm64]
 
 archives:
-  - formats: [tar.gz]
+  - id: versioned
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
         formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  # Same archives without the version, so docs can link a stable
+  # releases/latest/download/<name> URL.
+  - id: unversioned
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
 
 homebrew_casks:
   - name: webshare
+    ids: [versioned]
     repository:
       owner: webshare-proxy
       name: homebrew-tap
