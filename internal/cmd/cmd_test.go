@@ -497,3 +497,14 @@ func TestIPAuthRemoveOfAnUnknownIPFailsWithoutDeleting(t *testing.T) {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
 }
+
+func TestUIOutsideATerminalIsAUsageErrorWithNoEscapeCodes(t *testing.T) {
+	t.Setenv("WEBSHARE_API_KEY", "k")
+	out, code := runCLI(t, "ui")
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("stdout carries escape codes: %q", out)
+	}
+}

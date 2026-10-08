@@ -22,3 +22,13 @@ func ListProxies(ctx context.Context, client *webshare.Client, params webshare.P
 	}
 	return proxies, false, nil
 }
+
+// ProxyHost returns the address to connect to: the proxy's own address in
+// direct mode, or the backbone host when the API returns none (residential
+// plans).
+func ProxyHost(p webshare.Proxy) string {
+	if p.ProxyAddress != nil {
+		return *p.ProxyAddress
+	}
+	return webshare.BackboneHost
+}

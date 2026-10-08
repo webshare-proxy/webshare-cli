@@ -85,7 +85,7 @@ func newAccountCmd(flags *rootFlags) *cobra.Command {
 			}
 			if plan != nil {
 				pairs = append(pairs,
-					[2]string{"Active plan", fmt.Sprintf("#%d %s/%s, %d proxies, %s", plan.ID, plan.ProxyType, plan.ProxySubtype, plan.ProxyCount, formatBandwidth(plan.BandwidthLimit))},
+					[2]string{"Active plan", fmt.Sprintf("#%d %s/%s, %d proxies, %s", plan.ID, plan.ProxyType, plan.ProxySubtype, plan.ProxyCount, output.Bandwidth(plan.BandwidthLimit))},
 				)
 			}
 			if subscription.Throttled {

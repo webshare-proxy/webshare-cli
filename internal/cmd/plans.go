@@ -20,13 +20,6 @@ func newPlansCmd(flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func formatBandwidth(gb float64) string {
-	if gb == 0 {
-		return "unlimited"
-	}
-	return fmt.Sprintf("%g GB", gb)
-}
-
 func newPlansListCmd(flags *rootFlags) *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
@@ -54,7 +47,7 @@ func newPlansListCmd(flags *rootFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{
 					strconv.Itoa(p.ID), status, string(p.ProxyType), string(p.ProxySubtype),
-					strconv.Itoa(p.ProxyCount), formatBandwidth(p.BandwidthLimit),
+					strconv.Itoa(p.ProxyCount), output.Bandwidth(p.BandwidthLimit),
 					fmt.Sprintf("$%.2f/mo", p.MonthlyPrice),
 				})
 			}
@@ -91,7 +84,7 @@ func newPlansShowCmd(flags *rootFlags) *cobra.Command {
 				{"Status", string(plan.Status)},
 				{"Type", fmt.Sprintf("%s/%s", plan.ProxyType, plan.ProxySubtype)},
 				{"Proxies", strconv.Itoa(plan.ProxyCount)},
-				{"Bandwidth", formatBandwidth(plan.BandwidthLimit)},
+				{"Bandwidth", output.Bandwidth(plan.BandwidthLimit)},
 				{"Price", fmt.Sprintf("$%.2f/mo, $%.2f/yr", plan.MonthlyPrice, plan.YearlyPrice)},
 				{"On-demand refreshes", fmt.Sprintf("%d of %d available", plan.OnDemandRefreshesAvailable, plan.OnDemandRefreshesTotal)},
 				{"Replacements", fmt.Sprintf("%d of %d available", plan.ProxyReplacementsAvailable, plan.ProxyReplacementsTotal)},

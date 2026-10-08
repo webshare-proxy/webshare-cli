@@ -167,3 +167,25 @@ func CSV(w io.Writer, header []string, rows [][]string) error {
 	cw.Flush()
 	return cw.Error()
 }
+
+// Bandwidth formats a plan bandwidth limit in GB, 0 meaning unlimited.
+func Bandwidth(gb float64) string {
+	if gb == 0 {
+		return "unlimited"
+	}
+	return fmt.Sprintf("%g GB", gb)
+}
+
+// Bytes formats n in binary units (KiB, MiB, ...).
+func Bytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}

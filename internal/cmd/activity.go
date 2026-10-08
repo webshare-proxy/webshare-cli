@@ -83,7 +83,7 @@ func newActivityListCmd(flags *rootFlags) *cobra.Command {
 					a.Timestamp.Local().Format("15:04:05"),
 					a.Protocol,
 					target,
-					formatBytes(int64(a.Bytes)),
+					output.Bytes(int64(a.Bytes)),
 					fmt.Sprintf("%.2fs", a.RequestDuration),
 					result,
 				})

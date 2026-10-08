@@ -32,19 +32,6 @@ func parseSince(since string) (*time.Time, error) {
 	return &t, nil
 }
 
-func formatBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.2f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
 func newStatsCmd(flags *rootFlags) *cobra.Command {
 	var (
 		planID int
@@ -88,7 +75,7 @@ or the hourly series with --hourly.`,
 						s.Timestamp.Local().Format("2006-01-02 15:04"),
 						strconv.FormatInt(s.RequestsTotal, 10),
 						strconv.FormatInt(s.RequestsFailed, 10),
-						formatBytes(s.BandwidthTotal),
+						output.Bytes(s.BandwidthTotal),
 					})
 				}
 				return output.Table(os.Stdout, []string{"HOUR", "REQUESTS", "FAILED", "BANDWIDTH"}, rows)
@@ -108,8 +95,8 @@ or the hourly series with --hourly.`,
 				{"Requests", strconv.FormatInt(stats.RequestsTotal, 10)},
 				{"Successful", fmt.Sprintf("%d (%s)", stats.RequestsSuccessful, successRate)},
 				{"Failed", strconv.FormatInt(stats.RequestsFailed, 10)},
-				{"Bandwidth used", formatBytes(stats.BandwidthTotal)},
-				{"Bandwidth projected", formatBytes(stats.BandwidthProjected)},
+				{"Bandwidth used", output.Bytes(stats.BandwidthTotal)},
+				{"Bandwidth projected", output.Bytes(stats.BandwidthProjected)},
 				{"Unique proxies used", strconv.Itoa(stats.NumberOfProxiesUsed)},
 			}
 			if stats.LastRequestSentAt != nil {
