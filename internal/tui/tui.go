@@ -6,14 +6,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/webshare-proxy/webshare-cli/internal/app"
 	"github.com/webshare-proxy/webshare-cli/internal/output"
 	webshare "github.com/webshare-proxy/webshare-go"
@@ -35,6 +39,13 @@ const (
 	usagePanel
 	accessPanel
 )
+
+// cliEquivalents is what each read-only panel shows, as plain commands.
+var cliEquivalents = map[int]string{
+	accountPanel: "webshare account && webshare plans list",
+	usagePanel:   "webshare stats --since 24h",
+	accessPanel:  "webshare ipauth list && webshare subusers list",
+}
 
 // Run draws the UI until the user quits or ctx is cancelled.
 func Run(ctx context.Context, client *webshare.Client) error {
@@ -79,6 +90,14 @@ type model struct {
 
 	proxies       table.Model
 	proxiesStatus string
+	proxyList     []webshare.Proxy
+	mode          string
+	countries     []string
+	filter        textinput.Model
+	filtering     bool
+	showHelp      bool
+	// notice is the last action's feedback line on the proxies panel.
+	notice string
 
 	// Rendered bodies of the read-only panels, keyed by panel index.
 	bodies map[int]string
@@ -96,7 +115,12 @@ func newModel(ctx context.Context, client *webshare.Client) model {
 	styles.Header = styles.Header.Padding(0, columnGap/2)
 	styles.Cell = styles.Cell.Padding(0, columnGap/2)
 	proxies.SetStyles(styles)
-	return model{ctx: ctx, client: client, proxies: proxies, proxiesStatus: "loading…", bodies: map[int]string{}}
+	filter := textinput.New()
+	filter.Prompt = "country codes (comma-separated, empty for all): "
+	return model{
+		ctx: ctx, client: client, proxies: proxies, proxiesStatus: "loading…",
+		mode: "direct", filter: filter, bodies: map[int]string{},
+	}
 }
 
 func (m model) Init() tea.Cmd {
@@ -136,8 +160,7 @@ func (m model) loadAccess() tea.Msg {
 }
 
 func (m model) loadProxies() tea.Msg {
-	// ponytail: direct mode only, residential plans need a backbone toggle.
-	params := webshare.ProxyListParams{Mode: webshare.ConnectionMode("direct")}
+	params := webshare.ProxyListParams{Mode: webshare.ConnectionMode(m.mode), CountryCodeIn: m.countries}
 	proxies, truncated, err := app.ListProxies(m.ctx, m.client, params, proxyLimit)
 	return proxiesLoaded{proxies: proxies, truncated: truncated, err: err}
 }
@@ -147,10 +170,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.proxies.SetWidth(max(m.width-sidebarWidth-4, 0))
-		m.proxies.SetHeight(max(m.height-4, 1))
+		m.proxies.SetHeight(max(m.height-7, 1))
 		return m, nil
 	case proxiesLoaded:
 		m.proxiesStatus = proxiesStatus(msg)
+		m.proxyList = msg.proxies
+		m.notice = "cli: " + m.proxiesCommand()
 		rows := make([]table.Row, 0, len(msg.proxies))
 		for _, p := range msg.proxies {
 			valid := "yes"
@@ -171,9 +196,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bodies[accessPanel] = accessBody(msg)
 		return m, nil
 	case tea.KeyMsg:
+		if m.filtering {
+			return m.updateFilter(msg)
+		}
+		if m.showHelp {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "?", "esc", "q":
+				m.showHelp = false
+			}
+			return m, nil
+		}
 		switch msg.String() {
+		case "?":
+			m.showHelp = true
+			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "r":
+			return m.reload()
 		case "tab":
 			m.mainFocused = !m.mainFocused && m.selected == proxiesPanel
 			if m.mainFocused {
@@ -182,6 +224,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.proxies.Blur()
 			}
 			return m, nil
+		}
+		if m.selected == proxiesPanel {
+			switch msg.String() {
+			case "b":
+				if m.mode == "direct" {
+					m.mode = "backbone"
+				} else {
+					m.mode = "direct"
+				}
+				return m.reload()
+			case "/":
+				m.filtering = true
+				m.filter.SetValue(strings.Join(m.countries, ","))
+				return m, m.filter.Focus()
+			case "c":
+				m.notice = m.copySelected()
+				return m, nil
+			}
 		}
 		if m.mainFocused {
 			var cmd tea.Cmd
@@ -196,6 +256,80 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.filtering = false
+		m.filter.Blur()
+		return m, nil
+	case "enter":
+		m.filtering = false
+		m.filter.Blur()
+		m.countries = nil
+		for _, code := range strings.Split(m.filter.Value(), ",") {
+			if code = strings.TrimSpace(code); code != "" {
+				m.countries = append(m.countries, strings.ToUpper(code))
+			}
+		}
+		return m.reload()
+	}
+	var cmd tea.Cmd
+	m.filter, cmd = m.filter.Update(msg)
+	return m, cmd
+}
+
+// reload refetches the selected panel.
+func (m model) reload() (tea.Model, tea.Cmd) {
+	switch m.selected {
+	case proxiesPanel:
+		m.proxiesStatus = "loading…"
+		// ponytail: an older response arriving after a newer one wins; add a
+		// request counter if quick toggling ever shows stale rows.
+		return m, m.loadProxies
+	case accountPanel:
+		delete(m.bodies, accountPanel)
+		return m, m.loadAccount
+	case usagePanel:
+		delete(m.bodies, usagePanel)
+		return m, m.loadUsage
+	default:
+		delete(m.bodies, accessPanel)
+		return m, m.loadAccess
+	}
+}
+
+// proxiesCommand is the CLI command that lists what the panel shows.
+func (m model) proxiesCommand() string {
+	command := "webshare proxies list"
+	if m.mode != "direct" {
+		command += " --mode " + m.mode
+	}
+	if len(m.countries) > 0 {
+		command += " --country " + strings.ToLower(strings.Join(m.countries, ","))
+	}
+	return command
+}
+
+// copySelected puts the selected proxy's URL on the clipboard through OSC 52
+// and returns the feedback line.
+func (m model) copySelected() string {
+	cursor := m.proxies.Cursor()
+	if cursor < 0 || cursor >= len(m.proxyList) {
+		return "no proxy selected"
+	}
+	p := m.proxyList[cursor]
+	proxyURL := (&url.URL{
+		Scheme: "http",
+		User:   url.UserPassword(p.Username, p.Password),
+		Host:   net.JoinHostPort(app.ProxyHost(p), strconv.Itoa(p.Port)),
+	}).String()
+	// ponytail: written outside the renderer, fine for one short sequence.
+	termenv.Copy(proxyURL)
+	return "copied " + proxyURL + " (needs a terminal with OSC 52)"
 }
 
 func proxiesStatus(msg proxiesLoaded) string {
@@ -324,13 +458,15 @@ var (
 	focusedColor = lipgloss.Color("6")
 	dimStyle     = lipgloss.NewStyle().Faint(true)
 	selectStyle  = lipgloss.NewStyle().Bold(true).Reverse(true)
+	keyStyle     = lipgloss.NewStyle().Foreground(focusedColor)
 )
 
 func (m model) View() string {
 	if m.width == 0 {
 		return ""
 	}
-	height := max(m.height-2, 1)
+	// Two border rows plus the keybindings bar.
+	height := max(m.height-3, 1)
 
 	items := ""
 	for i, name := range panels {
@@ -347,9 +483,14 @@ func (m model) View() string {
 
 	var body string
 	if m.selected == proxiesPanel {
-		body = m.proxies.View() + "\n" + dimStyle.Render(m.proxiesStatus+" · tab to focus · q to quit")
+		body = m.proxies.View() + "\n" + dimStyle.Render(m.proxiesStatus+" · mode "+m.mode)
+		if m.filtering {
+			body += "\n" + m.filter.View()
+		} else {
+			body += "\n" + m.notice
+		}
 	} else if text, ok := m.bodies[m.selected]; ok {
-		body = text + "\n" + dimStyle.Render("q to quit")
+		body = text + "\n" + dimStyle.Render("cli: "+cliEquivalents[m.selected])
 	} else {
 		body = dimStyle.Render("loading…")
 	}
@@ -358,5 +499,84 @@ func (m model) View() string {
 		main = main.BorderForeground(focusedColor)
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar.Render(items), main.Render(body))
+	panes := lipgloss.JoinHorizontal(lipgloss.Top, sidebar.Render(items), main.Render(body))
+	if m.showHelp {
+		panes = lipgloss.Place(m.width, m.height-1, lipgloss.Center, lipgloss.Center, helpView())
+	}
+	return panes + "\n" + m.keybindings()
+}
+
+// allKeybindings is the full list shown by "?", grouped by where they work.
+var allKeybindings = []struct {
+	group    string
+	bindings [][2]string
+}{
+	{"Global", [][2]string{
+		{"↑/↓ or k/j", "move between panels, or rows when focused"},
+		{"tab", "focus the panel / back to the sidebar"},
+		{"r", "refresh the selected panel"},
+		{"?", "show or hide this list"},
+		{"q, ctrl+c", "quit"},
+	}},
+	{"Proxies", [][2]string{
+		{"b", "switch between direct and backbone mode"},
+		{"/", "filter by country codes"},
+		{"c", "copy the selected proxy URL"},
+		{"pgup/pgdown", "page through the table"},
+		{"home/end or g/G", "first or last row"},
+	}},
+	{"Country filter", [][2]string{
+		{"enter", "apply"},
+		{"esc", "cancel"},
+	}},
+}
+
+func helpView() string {
+	var b strings.Builder
+	for i, group := range allKeybindings {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render(group.group) + "\n")
+		width := 0
+		for _, binding := range group.bindings {
+			width = max(width, lipgloss.Width(binding[0]))
+		}
+		for _, binding := range group.bindings {
+			key := binding[0] + strings.Repeat(" ", width-lipgloss.Width(binding[0])+columnGap)
+			b.WriteString("  " + keyStyle.Render(key) + binding[1] + "\n")
+		}
+	}
+	return borderStyle.BorderForeground(focusedColor).Padding(0, 2).Render(strings.TrimSuffix(b.String(), "\n"))
+}
+
+// keybindings renders the bottom bar, lazygit style: only the keys that work
+// where the focus is.
+func (m model) keybindings() string {
+	var bindings [][2]string
+	switch {
+	case m.showHelp:
+		bindings = [][2]string{{"Close", "esc"}}
+	case m.filtering:
+		bindings = [][2]string{{"Apply", "enter"}, {"Cancel", "esc"}}
+	case m.mainFocused:
+		bindings = [][2]string{{"Move", "↑/↓"}, {"Back", "tab"}}
+	default:
+		bindings = [][2]string{{"Panels", "↑/↓"}}
+		if m.selected == proxiesPanel {
+			bindings = append(bindings, [2]string{"Focus", "tab"})
+		}
+	}
+	if !m.filtering && !m.showHelp {
+		bindings = append(bindings, [2]string{"Refresh", "r"})
+		if m.selected == proxiesPanel {
+			bindings = append(bindings, [2]string{"Direct/backbone", "b"}, [2]string{"Country", "/"}, [2]string{"Copy URL", "c"})
+		}
+		bindings = append(bindings, [2]string{"Quit", "q"}, [2]string{"Keybindings", "?"})
+	}
+	parts := make([]string, 0, len(bindings))
+	for _, b := range bindings {
+		parts = append(parts, b[0]+": "+keyStyle.Render(b[1]))
+	}
+	return strings.Join(parts, dimStyle.Render(" | "))
 }
