@@ -85,6 +85,7 @@ to stderr; exit codes are `0` (success), `1` (API/network error), `2`
 
 | Command | Purpose |
 |---|---|
+| `webshare ui` | Interactive terminal UI over your plans, usage, IPs and sub-users (`?` for keybindings) |
 | `webshare proxies list` | List proxies as a table, txt, csv or json (`--country`, `--limit`; first 100 by default) |
 | `webshare proxies download` | Server-rendered proxy list; download token fetched automatically |
 | `webshare proxies refresh` | Replace the whole proxy list (asks for confirmation) |
