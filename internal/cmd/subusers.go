@@ -58,7 +58,7 @@ func newSubusersListCmd(flags *rootFlags) *cobra.Command {
 				rows = append(rows, []string{
 					strconv.Itoa(s.ID), s.Label, limit,
 					strconv.Itoa(s.MaxThreadCount),
-					formatBytes(s.AggregateStats.BandwidthTotal),
+					output.Bytes(s.AggregateStats.BandwidthTotal),
 				})
 			}
 			return output.Table(os.Stdout, []string{"ID", "LABEL", "BANDWIDTH LIMIT", "MAX THREADS", "USED"}, rows)

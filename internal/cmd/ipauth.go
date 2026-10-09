@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"github.com/webshare-proxy/webshare-cli/internal/app"
 	"github.com/webshare-proxy/webshare-cli/internal/output"
 	webshare "github.com/webshare-proxy/webshare-go"
 )
@@ -140,18 +141,9 @@ func newIPAuthRemoveCmd(flags *rootFlags) *cobra.Command {
 				if net.ParseIP(args[0]) == nil {
 					return usagef("%q is neither an authorization ID nor an IP address", args[0])
 				}
-				found := false
-				for auth, err := range client.IPAuthorizations.ListAll(ctx, params) {
-					if err != nil {
-						return err
-					}
-					if auth.IPAddress == args[0] {
-						id, found = auth.ID, true
-						break
-					}
-				}
-				if !found {
-					return fmt.Errorf("no IP authorization found for %s", args[0])
+				id, err = app.FindIPAuthorizationID(ctx, client, params, args[0])
+				if err != nil {
+					return err
 				}
 			}
 			if err := client.IPAuthorizations.Delete(ctx, id, getParams); err != nil {

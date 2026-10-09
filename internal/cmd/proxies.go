@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/webshare-proxy/webshare-cli/internal/app"
 	"github.com/webshare-proxy/webshare-cli/internal/output"
 	webshare "github.com/webshare-proxy/webshare-go"
 )
@@ -31,16 +32,6 @@ func newProxiesCmd(flags *rootFlags) *cobra.Command {
 // — looks like a hang. --limit 0 still fetches everything, and
 // `proxies download` returns a full list in a single request.
 const defaultProxyListLimit = 100
-
-// proxyHost returns the address to connect to: the proxy's own address in
-// direct mode, or the backbone host when the API returns none (residential
-// plans).
-func proxyHost(p webshare.Proxy) string {
-	if p.ProxyAddress != nil {
-		return *p.ProxyAddress
-	}
-	return webshare.BackboneHost
-}
 
 func newProxiesListCmd(flags *rootFlags) *cobra.Command {
 	var (
@@ -81,19 +72,9 @@ the server renders in a single request.`,
 			for _, c := range countries {
 				params.CountryCodeIn = append(params.CountryCodeIn, strings.ToUpper(c))
 			}
-			// Read one past the limit so we can tell a list that happens to
-			// end exactly at the limit from one that was cut short.
-			var proxies []webshare.Proxy
-			truncated := false
-			for proxy, err := range client.Proxies.ListAll(cmd.Context(), params) {
-				if err != nil {
-					return err
-				}
-				if limit > 0 && len(proxies) == limit {
-					truncated = true
-					break
-				}
-				proxies = append(proxies, proxy)
+			proxies, truncated, err := app.ListProxies(cmd.Context(), client, params, limit)
+			if err != nil {
+				return err
 			}
 			if err := writeProxies(cmd, flags, proxies, format); err != nil {
 				return err
@@ -129,14 +110,14 @@ func writeProxies(cmd *cobra.Command, flags *rootFlags, proxies []webshare.Proxy
 		return output.JSON(os.Stdout, proxies)
 	case "txt":
 		for _, p := range proxies {
-			fmt.Printf("%s:%d:%s:%s\n", proxyHost(p), p.Port, p.Username, p.Password)
+			fmt.Printf("%s:%d:%s:%s\n", app.ProxyHost(p), p.Port, p.Username, p.Password)
 		}
 		return nil
 	case "csv":
 		rows := make([][]string, 0, len(proxies))
 		for _, p := range proxies {
 			rows = append(rows, []string{
-				proxyHost(p), strconv.Itoa(p.Port), p.Username, p.Password,
+				app.ProxyHost(p), strconv.Itoa(p.Port), p.Username, p.Password,
 				p.CountryCode, p.CityName, strconv.FormatBool(p.Valid), p.ID,
 			})
 		}
@@ -150,7 +131,7 @@ func writeProxies(cmd *cobra.Command, flags *rootFlags, proxies []webshare.Proxy
 				valid = styler.Red("no")
 			}
 			rows = append(rows, []string{
-				p.ID, proxyHost(p), strconv.Itoa(p.Port), p.CountryCode, p.CityName, valid,
+				p.ID, app.ProxyHost(p), strconv.Itoa(p.Port), p.CountryCode, p.CityName, valid,
 			})
 		}
 		if err := output.Table(os.Stdout, []string{"ID", "ADDRESS", "PORT", "COUNTRY", "CITY", "VALID"}, rows); err != nil {

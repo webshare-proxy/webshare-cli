@@ -84,6 +84,7 @@ a pipe, and --format csv/json/txt where structured output is useful.`,
 		newTransactionsCmd(flags),
 		newInvoicesCmd(flags),
 		newNotificationsCmd(flags),
+		newUICmd(flags),
 	)
 	return root, flags
 }
